@@ -25,6 +25,10 @@ OUT = Path('outputs/v2')
 OUT.mkdir(parents=True, exist_ok=True)
 N_SEEDS = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 THREADS = 12
+SMK_CFGS = [(6, 0.025, 1600, 3), (4, 0.03, 2500, 3), (5, 0.02, 3000, 10), (6, 0.02, 2000, 5), (5, 0.03, 1800, 3)]
+NOP_CFGS = [dict(depth=4, learning_rate=0.015, l2_leaf_reg=10), dict(depth=3, learning_rate=0.03, l2_leaf_reg=5),
+            dict(grow_policy='Lossguide', max_leaves=16, learning_rate=0.02, l2_leaf_reg=10),
+            dict(depth=5, learning_rate=0.02, l2_leaf_reg=10), dict(depth=4, learning_rate=0.03, l2_leaf_reg=5)]
 
 d, t, sub = load()
 y_s = d.Smoking.values
@@ -44,8 +48,9 @@ def smoking_stage(seed):
         pa, pb, pt = plate_centered(ref, [a, b, t])
         (ga, gb, gt), _ = batch_features_v2(a, [a, b, t])
         X = [base_X(f).join(p).assign(cal2=g.cal2_log1p) for f, p, g in [(a, pa, ga), (b, pb, gb), (t, pt, gt)]]
-        m = CatBoostClassifier(iterations=1600, depth=6, learning_rate=0.025, cat_features=CATS, verbose=False,
-                               allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+k)
+        depth, lr, it, l2 = SMK_CFGS[seed % len(SMK_CFGS)]  # vary settings across seeds for ensemble diversity
+        m = CatBoostClassifier(iterations=it, depth=depth, learning_rate=lr, l2_leaf_reg=l2, cat_features=CATS,
+                               verbose=False, allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+k)
         m.fit(X[0], y_s[tr])
         oof[va] = m.predict_proba(X[1])[:, 1]
         test += m.predict_proba(X[2])[:, 1] / 5
@@ -66,11 +71,12 @@ def gamma_stage(seed, p_smoke_oof, p_smoke_test):
         Xn = [base_X(f).drop(columns=['POC_GGT', 'POC_Batch']).join(x3).assign(p_smoke=p)
               for (f, _, _, x3), p in zip(frames, ps)]
         idx = np.random.RandomState(seed*10+k).rand(len(a)) < 0.85
-        for kind, X, depth, cats in [('main', Xm, 6, CATS), ('nop', Xn, 4, [c for c in CATS if c != 'POC_Batch'])]:
-            m = CatBoostRegressor(iterations=5000, depth=depth, learning_rate=0.03, l2_leaf_reg=5, loss_function='RMSE',
-                                  cat_features=cats, verbose=False, allow_writing_files=False, thread_count=THREADS,
-                                  random_seed=seed*10+k)
-            m.fit(X[0][idx], y_g[tr][idx], eval_set=(X[0][~idx], y_g[tr][~idx]), early_stopping_rounds=300)
+        nop_kw = NOP_CFGS[seed % len(NOP_CFGS)]
+        for kind, X, kw, cats in [('main', Xm, dict(depth=6, learning_rate=0.03, l2_leaf_reg=5), CATS),
+                                  ('nop', Xn, nop_kw, [c for c in CATS if c != 'POC_Batch'])]:
+            m = CatBoostRegressor(iterations=8000, loss_function='RMSE', cat_features=cats, verbose=False,
+                                  allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+k, **kw)
+            m.fit(X[0][idx], y_g[tr][idx], eval_set=(X[0][~idx], y_g[tr][~idx]), early_stopping_rounds=400)
             if kind == 'main':
                 oof_main[va] = m.predict(X[1]); te_main += m.predict(X[2]) / 5
             else:
