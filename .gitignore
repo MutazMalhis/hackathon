@@ -9,3 +9,7 @@ __pycache__/
 *.cbm
 *.zip
 *.pdf
+
+# Built by v2/plate_refine.py
+v2/refined_cache.csv
+catboost_info/
