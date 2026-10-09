@@ -25,6 +25,7 @@ OUT = Path('outputs/v2')
 OUT.mkdir(parents=True, exist_ok=True)
 N_SEEDS = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 THREADS = 12
+REFIT_W = 0.5  # weight of the full-data refit in test predictions
 SMK_CFGS = [(6, 0.025, 1600, 3), (4, 0.03, 2500, 3), (5, 0.02, 3000, 10), (6, 0.02, 2000, 5), (5, 0.03, 1800, 3)]
 NOP_CFGS = [dict(depth=4, learning_rate=0.015, l2_leaf_reg=10), dict(depth=3, learning_rate=0.03, l2_leaf_reg=5),
             dict(grow_policy='Lossguide', max_leaves=16, learning_rate=0.02, l2_leaf_reg=10),
@@ -54,12 +55,21 @@ def smoking_stage(seed):
         m.fit(X[0], y_s[tr])
         oof[va] = m.predict_proba(X[1])[:, 1]
         test += m.predict_proba(X[2])[:, 1] / 5
+    # Full-data refit: same settings on all training rows; test prediction = mean of fold average and refit.
+    pd_, pt_ = plate_centered(pd.concat([d, t]), [d, t])
+    (gd, gt_), _ = batch_features_v2(d, [d, t])
+    Xd, Xt = base_X(d).join(pd_).assign(cal2=gd.cal2_log1p), base_X(t).join(pt_).assign(cal2=gt_.cal2_log1p)
+    m = CatBoostClassifier(iterations=it, depth=depth, learning_rate=lr, l2_leaf_reg=l2, cat_features=CATS,
+                           verbose=False, allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+9)
+    m.fit(Xd, y_s)
+    test = REFIT_W*m.predict_proba(Xt)[:, 1] + (1-REFIT_W)*test
     return oof, test
 
 
 def gamma_stage(seed, p_smoke_oof, p_smoke_test):
     oof_main, oof_nop, oof_cal = np.zeros(len(d)), np.zeros(len(d)), np.full(len(d), np.nan)
     te_main, te_nop = np.zeros(len(t)), np.zeros(len(t))
+    best = {'main': [], 'nop': []}
     for k, (tr, va) in enumerate(KFold(5, shuffle=True, random_state=seed).split(d)):
         a, b = d.iloc[tr], d.iloc[va]
         fa, fb, ft = batch_features(a, [a, b, t])
@@ -77,11 +87,30 @@ def gamma_stage(seed, p_smoke_oof, p_smoke_test):
             m = CatBoostRegressor(iterations=8000, loss_function='RMSE', cat_features=cats, verbose=False,
                                   allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+k, **kw)
             m.fit(X[0][idx], y_g[tr][idx], eval_set=(X[0][~idx], y_g[tr][~idx]), early_stopping_rounds=400)
+            best[kind].append(m.get_best_iteration() + 1)
             if kind == 'main':
                 oof_main[va] = m.predict(X[1]); te_main += m.predict(X[2]) / 5
             else:
                 oof_nop[va] = m.predict(X[1]); te_nop += m.predict(X[2]) / 5
         oof_cal[va] = gb.cal2_log1p.values
+    # Full-data refit; fold models stopped on ~68% of rows, so scale their tree counts up for 100%.
+    fd, ft = batch_features(d, [d, t])
+    (gd, gt), _ = batch_features_v2(d, [d, t])
+    pd_, pt_ = plate_centered(pd.concat([d, t]), [d, t])
+    Xm = [base_X(f).join(x1).join(x2).join(x3).assign(p_smoke=p)
+          for f, x1, x2, x3, p in [(d, fd, gd, pd_, p_smoke_oof), (t, ft, gt, pt_, p_smoke_test)]]
+    Xn = [base_X(f).drop(columns=['POC_GGT', 'POC_Batch']).join(x3).assign(p_smoke=p)
+          for f, x3, p in [(d, pd_, p_smoke_oof), (t, pt_, p_smoke_test)]]
+    for kind, X, kw, cats in [('main', Xm, dict(depth=6, learning_rate=0.03, l2_leaf_reg=5), CATS),
+                              ('nop', Xn, nop_kw, [c for c in CATS if c != 'POC_Batch'])]:
+        n_it = int(np.mean(best[kind]) * 1.2)
+        m = CatBoostRegressor(iterations=n_it, loss_function='RMSE', cat_features=cats, verbose=False,
+                              allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+9, **kw)
+        m.fit(X[0], y_g)
+        if kind == 'main':
+            te_main = REFIT_W*m.predict(X[1]) + (1-REFIT_W)*te_main
+        else:
+            te_nop = REFIT_W*m.predict(X[1]) + (1-REFIT_W)*te_nop
     return oof_main, oof_nop, oof_cal, te_main, te_nop
 
 
