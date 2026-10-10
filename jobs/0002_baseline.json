@@ -1,0 +1,19 @@
+{
+ "args": [
+  "v4/run_baseline.py"
+ ],
+ "collect": [
+  "outputs/v2/*.npz",
+  "outputs/v2/*.csv",
+  "outputs/v2/*.json",
+  "outputs/plan_v1/*.json",
+  "outputs/plan_v1/*.csv",
+  "outputs/plan_v2/*.json",
+  "outputs/plan_v2/*.csv",
+  "outputs/plan_v3/*.json",
+  "outputs/plan_v3/*.csv",
+  "outputs/final/*.csv",
+  "v2/refined_cache.csv"
+ ],
+ "timeout_min": 360.0
+}
