@@ -13,3 +13,6 @@ __pycache__/
 # Built by v2/plate_refine.py
 v2/refined_cache.csv
 catboost_info/
+
+# Worktree used by v4/worker.py for the runner-results branch
+.runner-results/
