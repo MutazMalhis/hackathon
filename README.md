@@ -1,5 +1,7 @@
 # DSC ML Arena
 
+**Best public submission (0.86397): see [REPRODUCE_BEST_PUBLIC.md](REPRODUCE_BEST_PUBLIC.md), or run `bash scripts/reproduce_best_public.sh`.**
+
 Competition: https://www.kaggle.com/competitions/dsc-modeling-hackathon-ml-arena
 
 Place the competition's `train.csv`, `test.csv`, and `sample_submission.csv` in `data/` after joining and accepting the rules in Kaggle. External data, including the original source dataset, is prohibited.
