@@ -1,0 +1,8 @@
+{
+ "args": [
+  "v4/_selftest.py",
+  "5"
+ ],
+ "collect": [],
+ "timeout_min": 480
+}
