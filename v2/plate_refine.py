@@ -35,14 +35,7 @@ def refined_offsets(a, n_iter=2, seed=0):
 
 
 if __name__ == '__main__':
-    from sklearn.metrics import roc_auc_score as A
+    # Writes the per-row feature cache that v2/nn.py reads (train rows, then test rows).
     d, t, _ = load()
-    a = pd.concat([d, t], ignore_index=True)
-    f = refined_offsets(a).iloc[:len(d)]
-    r_c = np.log(a.Urine_Cotinine_ng_mL / a.Urine_Creatinine); r_e = np.log(a.Urine_EtG_ng_mL / a.Urine_Creatinine)
-    base_c = (r_c - r_c.groupby(a.Urine_Plate).transform('mean')).iloc[:len(d)]
-    base_e = (r_e - r_e.groupby(a.Urine_Plate).transform('mean')).iloc[:len(d)]
-    ok = f.rpc_cot.notna()
-    print('cot AUC  base', round(A(d.Smoking[ok], base_c[ok]), 4), ' refined', round(A(d.Smoking[ok], f.rpc_cot[ok]), 4))
-    y = np.log1p(d.Gamma_GT)
-    print('etg spearman base', round(base_e.corr(y, method='spearman'), 4), ' refined', round(f.rpc_etg.corr(y, method='spearman'), 4))
+    refined_offsets(pd.concat([d, t], ignore_index=True)).to_csv('v2/refined_cache.csv', index=False)
+    print('Wrote v2/refined_cache.csv')

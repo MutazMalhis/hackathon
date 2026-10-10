@@ -1,51 +1,92 @@
-# DSC ML Arena
+# DSC ML Arena — final solution
 
 **Best public submission (0.86397): see [REPRODUCE_BEST_PUBLIC.md](REPRODUCE_BEST_PUBLIC.md), or run `bash scripts/reproduce_best_public.sh`.**
 
 Competition: https://www.kaggle.com/competitions/dsc-modeling-hackathon-ml-arena
 
-Place the competition's `train.csv`, `test.csv`, and `sample_submission.csv` in `data/` after joining and accepting the rules in Kaggle. External data, including the original source dataset, is prohibited.
+Two targets are predicted for each person: `Smoking` (probability) and `Gamma_GT`
+(liver enzyme, scored by RMSLE). Score: `0.5 * (2 * AUC - 1) + 0.5 * (1 - RMSLE / 0.5041)`.
+
+## Result
+
+| | Smoking AUC | Gamma_GT RMSLE | Score |
+|---|---:|---:|---:|
+| Final submission (CatBoost + NN, 20% V3) — local out-of-fold | 0.97582 | 0.11600 | **0.86076** |
+| Best public submission (above + 30% rapid-test calibration) — local out-of-fold; public 0.86397 | 0.97582 | 0.11561 | **0.86116** |
+
+Local scores are out-of-fold estimates on the training data, not leaderboard scores.
+
+## How it works
+
+1. **Feature cache** (`v2/plate_refine.py`) — urine cotinine and EtG are divided by
+   creatinine and corrected for assay-plate offsets, adjusted for covariates.
+   Uses features only, never targets.
+2. **CatBoost pipeline** (`v2/pipeline.py`, 5 seeds) — inside the same 5-fold split:
+   - a Smoking classifier on plate-centred urine markers and calibrated Gamma_GT;
+   - a Gamma_GT model with all features, including a censoring-aware calibration of
+     the rapid test (`POC_GGT`) per cartridge batch;
+   - a Gamma_GT model without rapid-test inputs, for rows with no usable reading.
+3. **Neural network** (`v2/nn.py`, 3 seeds) — one multi-task network with
+   categorical embeddings predicts Smoking and feature-only Gamma_GT.
+4. **V3 candidate** (`experiments.py` → `improvements.py` → `refine.py`) — an
+   independent pipeline with engineered plate features, clinical Gamma_GT
+   regressors, and detection-floor calibration. Each step selects on development
+   folds and confirms on a second split before producing output.
+5. **Final blend** (`make_submission.py`):
+   - Smoking: rank average, 90% CatBoost + 10% NN, then 80% of that + 20% V3.
+   - Gamma_GT: a linear stack per reading group (calibrated reading / reading at the
+     detection floor of 3 / no reading) over the CatBoost and NN predictions,
+     then 80% of that + 20% V3, in log1p space.
+
+## Reproduce
+
+Place the competition's `train.csv`, `test.csv` and `sample_submission.csv` in `data/`
+(download from Kaggle after accepting the rules; external data is not allowed).
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python train.py
 ```
 
-The baseline trains separate CatBoost models for smoking and log1p gamma-GT with five stratified folds. Predictions are averaged across folds (gamma-GT in log space). Outputs include models, out-of-fold predictions, metric details, data hashes, and `outputs/submission.csv` aligned to sample IDs.
+Run the steps in order. CatBoost and PyTorch training take a while; outputs go to `outputs/`.
 
-Score: `0.5 * (2 * AUC - 1) + 0.5 * (1 - RMSLE / 0.5041)`. Gamma-GT predictions are clipped to [1, 1000]. Neither target nor ID is used as a predictor.
+```sh
+.venv/bin/python v2/plate_refine.py
+.venv/bin/python v2/pipeline.py 5
+.venv/bin/python v2/nn.py 3
+.venv/bin/python experiments.py
+.venv/bin/python improvements.py --phase all
+.venv/bin/python refine.py --phase all
+.venv/bin/python make_submission.py
+```
 
-Random stratification is an initial assumption. Once data is available, inspect duplicate records and overlap of workplaces, assay plates, and cartridge batches between splits. Compare grouped validation where the intended generalization requires it.
+The submission is written to `outputs/final/submission.csv`.
 
-Next experiments: urine concentration normalization, batch effects, rapid-test calibration, and cross-target stacking. Cross-target stacking requires predictions generated without access to the predicted row's labels, including within each outer validation fold. No in-sample target predictions should enter validation features.
+```sh
+.venv/bin/python -m unittest discover -s tests
+```
 
-The listed Kaggle close time is October 10, 2026 at 14:00 Europe/Paris. Some overview judging and timeline text contains placeholders; confirm presentation requirements with the organizers.
+runs the unit tests (they need the competition data).
 
-## Jupyter notebook
+## Exploration
 
-Open `hackathon_analysis.ipynb` for the complete exploration, plots, baseline training, batch calibration, and submission checks. Select the project `.venv` Python interpreter and run cells in order. Notebook outputs are saved under `outputs/notebook/`; the notebook contains all modeling code and does not depend on importing the project scripts.
+`hackathon_analysis.ipynb` and `reports/dataset_report.md` contain the data
+exploration, baseline and batch-calibration analysis. The notebook is
+self-contained and does not import the scripts above.
 
-For a JupyterLab interface, install `jupyterlab` in `.venv` and run `.venv/bin/jupyter lab hackathon_analysis.ipynb`. The notebook itself does not upload any submission.
+## Notebook outputs in Git
 
-## Stronger validation and selected candidate
-
-Run `.venv/bin/python experiments.py` for development-only selection, an outer holdout check with inner early stopping, error analysis, and final five-fold predictions. Run `.venv/bin/python robustness.py` for group-held-out diagnostics. Results are under `outputs/plan_v1/`; see `experiment_notes.md` there. The appended notebook contains the same workflow and saved result displays. Its retraining switches default to false.
-
-## Repository contents and notebook outputs
-
-The competition CSVs, trained models, predictions, and local outputs are excluded from Git. Obtain data through Kaggle after accepting the competition rules. Aggregate reports are under `reports/`.
-
-The local notebook can retain its executed outputs, but the Git clean filter removes outputs from committed notebook content. After cloning, enable the filter before committing executed notebooks:
+A clean filter strips notebook outputs from commits. After cloning, enable it:
 
 ```sh
 git config filter.notebook-clean.clean 'python3 scripts/clean_notebook.py'
 git config filter.notebook-clean.required true
 ```
+## Experiment history
 
-To inspect previous saved experiment results, run the workflows first. The appended notebook's `RUN_EXPERIMENTS` and `RUN_GROUP_DIAGNOSTICS` switches can be enabled for reproduction when `outputs/plan_v1/` is absent.
+The sections below record the development experiments behind the final files, in the order they were run.
 
-## Development-only model improvements
+### Development-only model improvements
 
 Run `.venv/bin/python improvements.py` to compare richer urine plate features,
 clinical Gamma_GT regressors, and complementary models. The workflow selects on
@@ -62,7 +103,7 @@ comparisons. Its `RUN_RETRAIN` switch defaults to false. Run
 training-only plate normalization, and fallback checks. These checks require the
 downloaded competition data.
 
-## Calibration refinement and cross-target experiment
+### Calibration refinement and cross-target experiment
 
 The user reported a Kaggle score of **0.85329** for the v2 candidate. Run
 `.venv/bin/python refine.py` after the earlier workflows to reproduce the
@@ -79,7 +120,7 @@ see `reports/refinement_notes.md` for assumptions, validation, and limitations.
 Notebook retraining is disabled by default. No workflow uploads submissions.
 
 
-## Push beyond the confirmed leaderboard result
+### Push beyond the confirmed leaderboard result
 
 The user identified `outputs/v2/submission_3seed.csv` as the file scoring
 **0.86380** on Kaggle (second place in the supplied screenshot). Keep that CSV
@@ -108,7 +149,7 @@ XGBoost is an optional comparison dependency. On Apple Silicon, its OpenMP
 runtime may require `brew install libomp`. No workflow uploads submissions.
 
 
-## Alternative model families
+### Alternative model families
 
 Open `alternative_models.ipynb` to review LightGBM, Extra Trees, and RBF SVM
 comparisons. Run `.venv/bin/python alternative_models.py --phase all` for
@@ -120,7 +161,7 @@ no new submission was generated. Results are in
 `reports/alternative_model_notes.md`. These are local diagnostics.
 
 
-## Final review of the newer neural-network blend
+### Final review of the newer neural-network blend
 
 `final_ensemble_review.ipynb` audits the existing neural-network + V3 submission.
 Run `.venv/bin/python final_ensemble_review.py` to reproduce its CSV, compare
@@ -132,12 +173,12 @@ V2's nesting and model-selection limitations. See
 `reports/final_enhancement_review.md` for the evidence and interpretation.
 
 
-## Rounded and censored assay candidate
+### Rounded and censored assay candidate
 
 `assay_precision.ipynb` contains the newest calibration experiment and its saved
 results. Run `.venv/bin/python calibration_precision_push.py` and then
 `.venv/bin/python assemble_precision_candidate.py` to reproduce the candidate
 `outputs/calibration_precision_push/submission_assay_precision.csv`.
 Its local diagnostic score is 0.861158, versus 0.860764 for the previous NN + V3
-blend. Its public score is unknown, and the evaluation inherits cached V2
-validation limitations. See `reports/assay_precision_notes.md`.
+blend. Its public score is 0.86397, our best; the evaluation inherits cached V2
+validation limitations. Full rebuild: [REPRODUCE_BEST_PUBLIC.md](REPRODUCE_BEST_PUBLIC.md). See `reports/assay_precision_notes.md`.

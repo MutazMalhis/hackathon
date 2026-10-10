@@ -27,8 +27,9 @@ N_SEEDS = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 THREADS = 12
 REFIT_W = 0.5  # weight of the full-data refit in test predictions
 # Test rows with a usable reading join the feature-only gamma model (target = calibrated reading).
-# Second argument; 0 reproduces the best public submission (0.86397), 1.0 the later candidate.
-PSEUDO_W = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
+# Second argument, default 0 (off): 0 reproduces the best public submission (0.86397);
+# 1.0 gives the later candidate outputs/v2/submission_final.csv (local 0.8615, public 0.86378).
+PSEUDO_W = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 SMK_CFGS = [(6, 0.025, 1600, 3), (4, 0.03, 2500, 3), (5, 0.02, 3000, 10), (6, 0.02, 2000, 5), (5, 0.03, 1800, 3)]
 NOP_CFGS = [dict(depth=4, learning_rate=0.015, l2_leaf_reg=10), dict(depth=3, learning_rate=0.03, l2_leaf_reg=5),
             dict(grow_policy='Lossguide', max_leaves=16, learning_rate=0.02, l2_leaf_reg=10),
