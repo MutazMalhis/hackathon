@@ -5,6 +5,7 @@ blended with the CatBoost components. Writes OOF + test predictions to outputs/v
 Usage: python v2/nn.py [n_seeds]
 """
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -19,7 +20,11 @@ from common import load, plate_centered
 torch.set_num_threads(8)
 N_SEEDS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
 d, t, _ = load()
-ref = pd.read_csv('v2/refined_cache.csv').drop(columns=['resid_cot', 'resid_etg'])
+CACHE = Path('v2/refined_cache.csv')
+if not CACHE.exists():  # covariate-adjusted plate offsets (features of train+test only, no targets)
+    from plate_refine import refined_offsets
+    refined_offsets(pd.concat([d, t], ignore_index=True)).to_csv(CACHE, index=False)
+ref = pd.read_csv(CACHE).drop(columns=['resid_cot', 'resid_etg'])
 d = d.join(ref.iloc[:len(d)].reset_index(drop=True)); t = t.join(ref.iloc[len(d):].reset_index(drop=True))
 y_s = d.Smoking.values.astype(np.float32)
 y_g = np.log1p(d.Gamma_GT.values).astype(np.float32)

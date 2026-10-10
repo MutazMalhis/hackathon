@@ -5,7 +5,7 @@ Stages (each fitted inside the same 5-fold split, test predictions averaged over
   2. gamma main model    - all features + slope-adjusted, censoring-aware batch calibration
   3. gamma feature-only  - no rapid-test inputs; used for rows without a calibrated reading
   4. linear stack        - per group (calibrated / detection floor / no reading), fitted on OOF
-Usage: python v2/pipeline.py [n_seeds]
+Usage: python v2/pipeline.py [n_seeds] [pseudo_weight]
 """
 import json
 import sys
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier, CatBoostRegressor
+from catboost import CatBoostClassifier, CatBoostRegressor, Pool
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import KFold, StratifiedKFold, cross_val_predict
 
@@ -26,6 +26,10 @@ OUT.mkdir(parents=True, exist_ok=True)
 N_SEEDS = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 THREADS = 12
 REFIT_W = 0.5  # weight of the full-data refit in test predictions
+# Test rows with a usable reading join the feature-only gamma model (target = calibrated reading).
+# Second argument, default 0 (off): 0 reproduces the best public submission (0.86397);
+# 1.0 gives the later candidate outputs/v2/submission_final.csv (local 0.8615, public 0.86378).
+PSEUDO_W = float(sys.argv[2]) if len(sys.argv) > 2 else 0.0
 SMK_CFGS = [(6, 0.025, 1600, 3), (4, 0.03, 2500, 3), (5, 0.02, 3000, 10), (6, 0.02, 2000, 5), (5, 0.03, 1800, 3)]
 NOP_CFGS = [dict(depth=4, learning_rate=0.015, l2_leaf_reg=10), dict(depth=3, learning_rate=0.03, l2_leaf_reg=5),
             dict(grow_policy='Lossguide', max_leaves=16, learning_rate=0.02, l2_leaf_reg=10),
@@ -86,7 +90,14 @@ def gamma_stage(seed, p_smoke_oof, p_smoke_test):
                                   ('nop', Xn, nop_kw, [c for c in CATS if c != 'POC_Batch'])]:
             m = CatBoostRegressor(iterations=8000, loss_function='RMSE', cat_features=cats, verbose=False,
                                   allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+k, **kw)
-            m.fit(X[0][idx], y_g[tr][idx], eval_set=(X[0][~idx], y_g[tr][~idx]), early_stopping_rounds=400)
+            if kind == 'nop' and PSEUDO_W > 0:
+                ok = (gt.cal2_log1p.notna() & (t.POC_GGT > 3)).values  # offsets from this fold's training rows only
+                cats_n = [c for c in CATS if c != 'POC_Batch']
+                fit = Pool(pd.concat([X[0][idx], X[2][ok]]), np.r_[y_g[tr][idx], gt.cal2_log1p.values[ok]], cat_features=cats_n,
+                           weight=np.r_[np.ones(idx.sum()), np.full(ok.sum(), PSEUDO_W)])
+                m.fit(fit, eval_set=Pool(X[0][~idx], y_g[tr][~idx], cat_features=cats_n), early_stopping_rounds=400)
+            else:
+                m.fit(X[0][idx], y_g[tr][idx], eval_set=(X[0][~idx], y_g[tr][~idx]), early_stopping_rounds=400)
             best[kind].append(m.get_best_iteration() + 1)
             if kind == 'main':
                 oof_main[va] = m.predict(X[1]); te_main += m.predict(X[2]) / 5
@@ -106,7 +117,12 @@ def gamma_stage(seed, p_smoke_oof, p_smoke_test):
         n_it = int(np.mean(best[kind]) * 1.2)
         m = CatBoostRegressor(iterations=n_it, loss_function='RMSE', cat_features=cats, verbose=False,
                               allow_writing_files=False, thread_count=THREADS, random_seed=seed*10+9, **kw)
-        m.fit(X[0], y_g)
+        if kind == 'nop' and PSEUDO_W > 0:
+            ok = (gt.cal2_log1p.notna() & (t.POC_GGT > 3)).values
+            m.fit(Pool(pd.concat([X[0], X[1][ok]]), np.r_[y_g, gt.cal2_log1p.values[ok]], cat_features=cats,
+                       weight=np.r_[np.ones(len(d)), np.full(ok.sum(), PSEUDO_W)]))
+        else:
+            m.fit(X[0], y_g)
         if kind == 'main':
             te_main = REFIT_W*m.predict(X[1]) + (1-REFIT_W)*te_main
         else:
