@@ -13,7 +13,7 @@ The script stops at the first error, and at the end it prints the file's SHA-256
 ## 1. Setup
 
 1. Join the competition on Kaggle and accept its rules. External data is not allowed.
-2. Download `train.csv`, `test.csv` and `sample_submission.csv` into `data/`. Competition data, models and predictions are kept out of Git under the competition rules (see `.gitignore`).
+2. The competition CSVs (`train.csv`, `test.csv`, `sample_submission.csv`) are included in `data/` for the team; they are the same files as on Kaggle. Models and predictions stay out of Git (see `.gitignore`).
 3. Create the environment from the repository root:
 
 ```sh

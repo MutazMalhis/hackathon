@@ -40,8 +40,8 @@ Local scores are out-of-fold estimates on the training data, not leaderboard sco
 
 ## Reproduce
 
-Place the competition's `train.csv`, `test.csv` and `sample_submission.csv` in `data/`
-(download from Kaggle after accepting the rules; external data is not allowed).
+The competition's `train.csv`, `test.csv` and `sample_submission.csv` are included in `data/`
+for the team (private repository; the same files as on Kaggle). External data is not allowed.
 
 ```sh
 python3 -m venv .venv

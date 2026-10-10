@@ -1,5 +1,9 @@
 .venv/
 data/*
+# The competition CSVs are committed for the team (private repository).
+!data/train.csv
+!data/test.csv
+!data/sample_submission.csv
 outputs/*
 __pycache__/
 .ipynb_checkpoints/
